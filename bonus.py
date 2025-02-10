@@ -1,95 +1,94 @@
 import numpy as np
 import matplotlib.pyplot as plt
+import scipy.integrate as spi
 
 
-def sir_model_rk4(S0, I0, R0, beta, gamma, h, days):
-    def dSdt(S, I):
-        return -beta * S * I
+def sir_model(t, S, I, R, beta, gamma):
+    if np.isnan(S) or np.isnan(I) or np.isnan(R) or np.isinf(S) or np.isinf(I) or np.isinf(R):
+        return np.array([0.0, 0.0, 0.0])  # Останавливаем распространение NaN
 
-    def dIdt(S, I):
-        return beta * S * I - gamma * I
+    dSdt = -beta * S * I
+    dIdt = min(beta * S * I - gamma * I, 1e6)  # Ограничиваем рост I
+    dRdt = gamma * I
 
-    def dRdt(I):
-        return gamma * I
+    return np.array([dSdt, dIdt, dRdt])
 
-    steps = int(days / h) + 1  # Исправлено: включаем последний шаг
-    t = np.arange(0, days + h, h)  # Исправлено: корректное формирование временной оси
-    S, I, R = np.zeros(steps), np.zeros(steps), np.zeros(steps)
+
+
+def runge_kutta4(f, S0, I0, R0, beta, gamma, h, days):
+    steps = int(days / h)
+    S, I, R = np.zeros(steps + 1), np.zeros(steps + 1), np.zeros(steps + 1)
     S[0], I[0], R[0] = S0, I0, R0
 
-    for n in range(steps - 1):
-        k1S = h * dSdt(S[n], I[n])
-        k1I = h * dIdt(S[n], I[n])
-        k1R = h * dRdt(I[n])
+    for n in range(steps):
+        t = n * h
+        k1 = h * f(t, S[n], I[n], R[n], beta, gamma)
+        k2 = h * f(t + h / 2, S[n] + k1[0] / 2, I[n] + k1[1] / 2, R[n] + k1[2] / 2, beta, gamma)
+        k3 = h * f(t + h / 2, S[n] + k2[0] / 2, I[n] + k2[1] / 2, R[n] + k2[2] / 2, beta, gamma)
+        k4 = h * f(t + h, S[n] + k3[0], I[n] + k3[1], R[n] + k3[2], beta, gamma)
 
-        k2S = h * dSdt(S[n] + k1S / 2, I[n] + k1I / 2)
-        k2I = h * dIdt(S[n] + k1S / 2, I[n] + k1I / 2)
-        k2R = h * dRdt(I[n] + k1I / 2)
+        S[n + 1] = S[n] + (k1[0] + 2 * k2[0] + 2 * k3[0] + k4[0]) / 6
+        I[n + 1] = I[n] + (k1[1] + 2 * k2[1] + 2 * k3[1] + k4[1]) / 6
+        R[n + 1] = R[n] + (k1[2] + 2 * k2[2] + 2 * k3[2] + k4[2]) / 6
 
-        k3S = h * dSdt(S[n] + k2S / 2, I[n] + k2I / 2)
-        k3I = h * dIdt(S[n] + k2S / 2, I[n] + k2I / 2)
-        k3R = h * dRdt(I[n] + k2I / 2)
-
-        k4S = h * dSdt(S[n] + k3S, I[n] + k3I)
-        k4I = h * dIdt(S[n] + k3S, I[n] + k3I)
-        k4R = h * dRdt(I[n] + k3I)
-
-        S[n + 1] = S[n] + (k1S + 2 * k2S + 2 * k3S + k4S) / 6
-        I[n + 1] = I[n] + (k1I + 2 * k2I + 2 * k3I + k4I) / 6
-        R[n + 1] = R[n] + (k1R + 2 * k2R + 2 * k3R + k4R) / 6
-
-    return t, S, I, R
+    return S, I, R
 
 
-# Начальные условия
-S0, I0, R0 = 999000, 1000, 0
+# Initial conditions
+S0, I0, R0 = np.float64(999000), np.float64(1000), np.float64(0)
 beta, gamma = 0.0003, 0.1
-h, days = 0.1, 100
+h, days = 0.05, 100
 
-t, S, I, R = sir_model_rk4(S0, I0, R0, beta, gamma, h, days)
+# Solve original scenario
+S, I, R = runge_kutta4(sir_model, S0, I0, R0, beta, gamma, h, days)
 
-# Пиковое число зараженных и день пика
-peak_I = max(I)
-peak_day = t[np.argmax(I)]
-total_infected = max(1_000_000 - S)  # Исправлено: максимальное количество зараженных
+days_range = np.linspace(0, days, len(S))
+peak_infected = np.max(I)
+peak_day = days_range[np.argmax(I)]
+total_infected = S0 - S[-1]
 
-# Построение графиков
-plt.figure(figsize=(10, 5))
-plt.plot(t, S, label="Susceptible")
-plt.plot(t, I, label="Infected")
-plt.plot(t, R, label="Recovered")
-plt.axvline(peak_day, color='r', linestyle='--', label=f'Peak: Day {peak_day:.1f}')
-plt.xlabel("Days")
-plt.ylabel("Population")
-plt.title("SIR Model Simulation (RK4)")
+# Vaccination scenario (50% reduction in susceptible population)
+S_v, I_v, R_v = runge_kutta4(sir_model, S0 * 0.5, I0, R0, beta, gamma, h, days)
+
+# Social distancing scenario (50% reduction in beta)
+S_sd, I_sd, R_sd = runge_kutta4(sir_model, S0, I0, R0, beta * 0.5, gamma, h, days)
+
+# Plot results
+plt.figure(figsize=(10, 6))
+plt.plot(days_range, S, label='Susceptible', color='blue')
+plt.plot(days_range, I, label='Infected', color='red')
+plt.plot(days_range, R, label='Recovered', color='green')
+plt.xlabel('Days')
+plt.ylabel('Population')
+plt.title('SIR Model Simulation')
 plt.legend()
 plt.grid()
-plt.ylim(0, 1_000_000)  # Исправлено: масштаб графика
 plt.show()
 
-print(f"Peak Infected: {peak_I:.0f} on Day {peak_day:.1f}")
-print(f"Total Infected During Outbreak: {total_infected:.0f}")
+# Comparisons for vaccination and social distancing
+plt.figure(figsize=(10, 6))
+plt.plot(days_range, I, label='Original Infected', color='red')
+plt.plot(days_range, I_v, label='Vaccination 50% Infected', color='purple', linestyle='dashed')
+plt.plot(days_range, I_sd, label='Social Distancing 50% Infected', color='orange', linestyle='dashed')
+plt.xlabel('Days')
+plt.ylabel('Infected Population')
+plt.title('Effect of Interventions')
+plt.legend()
+plt.grid()
+plt.show()
 
+print(f'Peak infected: {peak_infected:.0f} on day {peak_day:.1f}')
+print(f'Total infected at some point: {total_infected:.0f}')
 
-# Численное интегрирование для энергопотребления
-
-def trapezoidal_rule(x, y):
-    return np.trapezoid(y, x)
-
-
-def simpsons_rule(x, y):
-    if len(x) % 2 == 0:  # Исправлено: метод Симпсона требует нечетного числа точек
-        x = np.append(x, x[-1] + (x[-1] - x[-2]))
-        y = np.append(y, y[-1])
-    return np.sum((x[2::2] - x[:-2:2]) / 6 * (y[:-2:2] + 4 * y[1::2] + y[2::2]))
-
-
-# Данные энергопотребления
+# Given data
 time = np.array([0, 2, 4, 6, 8, 10, 12, 14, 16, 18, 20, 22, 24])
 power = np.array([500, 480, 450, 600, 800, 950, 1000, 980, 920, 850, 700, 550, 500])
 
-energy_trap = trapezoidal_rule(time, power)
-energy_simp = simpsons_rule(time, power)
+# Trapezoidal Rule
+energy_trap = np.trapezoid(power, time)
 
-print(f"Total Energy Consumption (Trapezoidal Rule): {energy_trap:.2f} MWh")
-print(f"Total Energy Consumption (Simpson's Rule): {energy_simp:.2f} MWh")
+# Simpson’s Rule
+energy_simp = spi.simpson(power, time)
+
+print(f"Total energy consumption using Trapezoidal Rule: {energy_trap:.2f} MWh")
+print(f"Total energy consumption using Simpson's Rule: {energy_simp:.2f} MWh")
